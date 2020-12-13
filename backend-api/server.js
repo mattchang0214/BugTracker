@@ -9,6 +9,7 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const authConfig = require("./config/auth.config.js");
 const dBConfig = require("./config/db.config.js");
+const utils = require("./helpers/util.js")
 const PORT = 3080;
 
 const corsOptions = {
@@ -68,9 +69,8 @@ app.post("/api/auth/signin", function (req, res) {
 
 app.get("/api/users", 
     passport.authenticate("jwt", { /* failureRedirect: "/login", */ session: false }),
+    utils.checkAdmin(),
     function (req, res) {
-        if (req.user[0].is_admin !== 1)
-            return res.sendStatus(403);
         const sql = "SELECT * FROM `users`";
         pool.query(sql, function (err, result) {
             if (err)
