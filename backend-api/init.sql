@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
     pwd_hash VARCHAR(60) NOT NULL, 
     first_name VARCHAR(20),
     last_name VARCHAR(20),
-    is_admin BIT DEFAULT 0 NOT NULL,
+    is_admin TINYINT DEFAULT 0 NOT NULL CHECK (is_admin IN (0, 1)),
     PRIMARY KEY (user_id),
     UNIQUE (username)
 );
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS bugs (
     bug_id INT NOT NULL AUTO_INCREMENT,
     bug_name VARCHAR(50),
     bug_description VARCHAR(255),
-    priority TINYINT CHECK (priority < 3),
+    priority TINYINT CHECK (priority BETWEEN 0 AND 2),
     time_created DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
     resolved BIT DEFAULT 0 NOT NULL,
     time_resolved DATETIME,

@@ -1,24 +1,15 @@
 const mysql = require("mysql2");
 // const fs = require("fs");
 const passport = require("passport");
-const JwtStrategy = require("passport-jwt").Strategy;
-const ExtractJwt = require('passport-jwt').ExtractJwt;
+require('./config/passport')(passport);
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-
-const dBConfig = require("./config/db.config.js");
 const authConfig = require("./config/auth.config.js");
+const dBConfig = require("./config/db.config.js");
 const PORT = 3080;
-
-const passportJWTOptions = {
-    jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-    secretOrKey: authConfig.SECRET,
-    ignoreExpiration: false,
-    passReqToCallback: false,
-};
 
 const corsOptions = {
     origin: "http://localhost:3000"
@@ -44,18 +35,6 @@ app.use(bodyParser.json());
 // parse requests of content-type - application/x-www-form-urlencoded
 app.use(bodyParser.urlencoded({ extended: true }));
 
-passport.use(new JwtStrategy(passportJWTOptions, 
-    function (jwt_payload, callback) {
-        const sql = "SELECT * FROM `users` WHERE `user_id` = ?";
-        pool.query(sql, [jwt_payload.sub], function (err, user) {
-            if (err != null)
-                return callback(err);
-            if (user != null)
-                return callback(null, user);
-            return callback(null, false);
-        });
-    }
-));
 
 app.get("/", function (req, res) {
     res.send('App Works!');
@@ -65,19 +44,19 @@ app.post("/api/auth/signin", function (req, res) {
     const sql = "SELECT * FROM `users` WHERE `username` = ?";
     pool.query(sql, [req.body.username], function(err, user) {
         if (err)
-            throw err;
+            return res.sendStatus(500);
         if (user == null || user.length !== 1) {
             return res.status(401).json({ success: false, message: "Could not find user" });
         }
         if (bcrypt.compareSync(req.body.password, user[0].pwd_hash)) {
             const payload = {
-                sub: user.id,
+                sub: user[0].user_id,
                 iat: Date.now()
             };
             const token = jwt.sign(payload, authConfig.SECRET, {
                 expiresIn: "1h"
             });
-            res.status(200).json({
+            res.json({
                 success: true,
                 accessToken: `Bearer ${token}`
             });
@@ -88,12 +67,14 @@ app.post("/api/auth/signin", function (req, res) {
 });
 
 app.get("/api/users", 
-    passport.authenticate("jwt", { failureRedirect: "/login", session: false }),
+    passport.authenticate("jwt", { /* failureRedirect: "/login", */ session: false }),
     function (req, res) {
+        if (req.user[0].is_admin !== 1)
+            return res.sendStatus(403);
         const sql = "SELECT * FROM `users`";
         pool.query(sql, function (err, result) {
             if (err)
-                throw err;
+                return res.sendStatus(500);
             res.json(result);
         });
     }
@@ -124,7 +105,7 @@ app.delete("/api/users/:userId", (req, res) => {
     const sql = "DELETE FROM users WHERE user_id=?";
     pool.query(sql, [req.body.userId], function (err, result) {
         if (err)
-            throw err;
+            return res.sendStatus(500);
     });
     res.json("User Deleted");
 });
