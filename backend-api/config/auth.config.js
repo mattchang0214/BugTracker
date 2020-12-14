@@ -1,3 +1,4 @@
 module.exports = {
-    SECRET: "my-secret-key"
+    SECRET: "my-secret-key",
+    SALTROUNDS: 10
 };

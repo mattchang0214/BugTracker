@@ -1,4 +1,3 @@
-const mysql = require("mysql2");
 // const fs = require("fs");
 const passport = require("passport");
 require('./config/passport')(passport);
@@ -7,26 +6,14 @@ const bodyParser = require("body-parser");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
+const { promisePool } = require("./util/mysql.js");
 const authConfig = require("./config/auth.config.js");
-const dBConfig = require("./config/db.config.js");
-const utils = require("./helpers/util.js")
+const myMiddleware = require("./util/middleware.js")
 const PORT = 3080;
 
 const corsOptions = {
     origin: "http://localhost:3000"
 };
-
-const pool = mysql.createPool({
-    host: dBConfig.HOST,
-    user: dBConfig.USER,
-    password: dBConfig.PASSWORD,
-    database: dBConfig.DB,
-    connectionLimit: dBConfig.pool.MAX,
-    // acquireTimeout: config.pool.ACQUIRE,
-    connectTimeout: dBConfig.pool.IDLE,
-    waitForConnections: dBConfig.pool.WAIT,
-    queueLimit: dBConfig.pool.QUEUE
-});
 
 const app = express();
 // app.use(express.static("public"));
@@ -38,18 +25,18 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 
 app.get("/", function (req, res) {
-    res.send('App Works!');
+    res.send("Hello. How can I help you?");
 });
 
-app.post("/api/auth/signin", function (req, res) {
-    const sql = "SELECT * FROM `users` WHERE `username` = ?";
-    pool.query(sql, [req.body.username], function(err, user) {
-        if (err)
-            return res.sendStatus(500);
+app.post("/api/auth/signin", 
+    myMiddleware.catchAsyncErr(async function (req, res) {
+        const sql = "SELECT * FROM `users` WHERE `username` = ?";
+        const [user] = await promisePool.execute(sql, [req.body.username]);
         if (user == null || user.length !== 1) {
             return res.status(401).json({ success: false, message: "Could not find user" });
         }
-        if (bcrypt.compareSync(req.body.password, user[0].pwd_hash)) {
+        const match = await bcrypt.compare(req.body.password, user[0].pwd_hash);
+        if (match) {
             const payload = {
                 sub: user[0].user_id,
                 iat: Date.now()
@@ -57,58 +44,69 @@ app.post("/api/auth/signin", function (req, res) {
             const token = jwt.sign(payload, authConfig.SECRET, {
                 expiresIn: "1h"
             });
-            res.json({
+            return res.json({
                 success: true,
                 accessToken: `Bearer ${token}`
             });
         } 
-        else
-            res.status(401).json({ success: false, message: "You entered the wrong password" });
-    });
-});
+        return res.status(401).json({ success: false, message: "You entered the wrong password" });
+    })
+);
 
 app.get("/api/users", 
-    passport.authenticate("jwt", { /* failureRedirect: "/login", */ session: false }),
-    utils.checkAdmin(),
-    function (req, res) {
+    passport.authenticate("jwt", { session: false }),
+    myMiddleware.checkAdmin(),
+    myMiddleware.catchAsyncErr(async function (req, res) {
         const sql = "SELECT * FROM `users`";
-        pool.query(sql, function (err, result) {
+        const [result] = await promisePool.execute(sql);
+        res.json(result);
+    })
+);
+
+app.get("/api/users/:userId", 
+    passport.authenticate("jwt", { session: false }),
+    myMiddleware.checkUser(),
+    myMiddleware.catchAsyncErr(async function (req, res) {
+        const sql = "SELECT `username`, `first_name`, `last_name`, `is_admin` FROM `users` WHERE `user_id` = ?";
+        const [result] = await promisePool.execute(sql, [req.params.userId]);
+        res.json(result);
+    })
+);
+
+app.post("/api/users", 
+    myMiddleware.catchAsyncErr(async function (req, res) {
+        const username = req.body.user.username;
+        const pwd = await bcrypt.hash(req.body.user.password, authConfig.SALTROUNDS);
+        const first = req.body.user.first_name;
+        const last = req.body.user.last_name;
+        const sql = "INSERT INTO users (username, pwd_hash, first_name, last_name) VALUES (?, ?, ?, ?)";
+        promisePool.execute(sql, [username, pwd, first, last]);
+        res.json("User Added");
+    })
+);
+
+/* app.put("/users/:userId",
+    passport.authenticate("jwt", { session: false }),
+    myMiddleware.checkUser(),
+    function (req, res) {
+        const sql = "UPDATE `users` SET WHERE `user_id` = ?";
+        pool.query(sql, [req.params.userId], function (err, result) {
             if (err)
                 return res.sendStatus(500);
             res.json(result);
         });
     }
+); */
+
+app.delete("/api/users/:userId",
+    passport.authenticate("jwt", { session: false }),
+    myMiddleware.checkUser(),
+    myMiddleware.catchAsyncErr(async function (req, res) {
+        const sql = "DELETE FROM `users` WHERE `user_id` = ?";
+        promisePool.execute(sql, [req.params.userId]);
+        res.json("User Deleted");
+    })
 );
-
-/* app.get("/api/users/:userId", function (req, res) {
-
-}); */
-
-app.post("/api/users", (req, res) => {
-    const username = req.body.user.username;
-    const pwd = req.body.user.password;
-    const first = req.body.user.first_name;
-    const last = req.body.user.last_name;
-    const sql = "INSERT INTO users (username, password, first_name, last_name) VALUES (?, ?, ?, ?)";
-    pool.query(sql, [username, pwd, first, last], function (err, result) {
-        if (err)
-            throw err;
-    });
-    res.json("User Added");
-});
-
-/* app.put("/users/:userId", (req, res) => {
-
-}); */
-
-app.delete("/api/users/:userId", (req, res) => {
-    const sql = "DELETE FROM users WHERE user_id=?";
-    pool.query(sql, [req.body.userId], function (err, result) {
-        if (err)
-            return res.sendStatus(500);
-    });
-    res.json("User Deleted");
-});
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
@@ -120,8 +118,9 @@ app.listen(PORT, () => {
     sqlStatements.pop();
     for (statement of sqlStatements) {
         pool.query(`${statement});`, function (err, result) {
-            if (err)
+            if (err) {
                 throw err;
+            }
         });
     }
 } */
